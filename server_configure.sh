@@ -43,6 +43,8 @@ EOF
 REGISTRATION_SHARED=$(cat /var/synapse/homeserver.yaml | grep registration_shared_secret)
 MACARON_SECRET=$(cat /var/synapse/homeserver.yaml | grep macaroon_secret_key)
 FORM_SECRET=$(cat /var/synapse/homeserver.yaml | grep form_secret)
+pkg_add pwgen
+TURN_SECRET_KEY=$(pwgen -s 641)
 cat > /var/synapse/homeserver.yaml <<- EOM
 # Configuration file for Synapse.
 #
@@ -88,26 +90,31 @@ enable_registration: true
 registration_requires_token: true
 
 # vim:ft=yaml
+turn_uris: [ "turn:$TURN_SERVER_NAME?transport=udp", "turn:$TURN_SERVER_NAME?transport=tcp" ]
+turn_shared_secret: "$TURN_SECRET_KEY"
+turn_user_lifetime: 86400000
+turn_allow_guests: true
 
 EOM
 rcctl enable synapse
-rcctl start synapse
 pkg_add certbot
 certbot certonly --standalone -d $SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
 ln -s /etc/letsencrypt/live/$SERVER_NAME/fullchain.pem /etc/ssl/$SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$SERVER_NAME/private/privkey.pem /etc/ssl/private/$SERVER_NAME.key
+ln -s /etc/letsencrypt/live/$SERVER_NAME/privkey.pem /etc/ssl/private/$SERVER_NAME.key
+certbot certonly --standalone -d $TURN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
+ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem /etc/ssl/$TURN_SERVER_NAME.cert
+ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem /etc/ssl/private/$TURN_SERVER_NAME.key
 echo "0 0,12 * * * root python3 -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -p" | tee -a /etc/crontab
 cd /tmp
-ftp "https://cdn.openbsd.org/pub/OpenBSD/$(uname -r)/{ports.tar.gz, SHA.256.sig}"
+ftp https://cdn.openbsd.org/pub/OpenBSD/$(uname -r)/{ports.tar.gz,SHA256.sig}
 signify -Cp /etc/signify/openbsd-$(uname -r | cut -c 1,3)-base.pub -x SHA256.sig ports.tar.gz
 cd /usr
 tar -xzf /tmp/ports.tar.gz
 cd /usr/ports/telephony/coturn
 make install
-SECRET_KEY=$(pwgen -s 641)
 cat > /etc/turnserver.conf <<- EOM
 use-auth-secret
-static-auth-secret=$SECRET_KEY
+static-auth-secret=$TURN_SECRET_KEY
 realm=$TURN_SERVER_NAME
 
 # VoIP traffic is all UDP. There is no reason to let users connect to arbitrary TCP endpoints via the relay.
@@ -144,16 +151,16 @@ total-quota=1200
 
 # TLS certificates, including intermediate certs.
 # For Let's Encrypt certificates, use \`fullchain.pem\` here.
-cert=/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem
+cert=/etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem
 
 # TLS private key file
-pkey=/etc/letsencrypt/live/$SERVER_NAME/privkey.pem
+pkey=/etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem
 
 # Ensure the configuration lines that disable TLS/DTLS are commented-out or removed
-#no-tls
-#no-dtls
+# no-tls
+# no-dtls
 EOM
-rcctl restart turnserver synapse
+rcctl start turnserver synapse
 pkg_add wget
 mkdir /var/www/element
 cd /var/www/element
@@ -213,26 +220,27 @@ cat > config.json <<- EOM
 EOM
 certbot certonly --standalone -d $ELEMENT_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
 ln -s /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem /etc/ssl/$ELEMENT_SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/private/privkey.pem /etc/ssl/private/$ELEMENT_SERVER_NAME.key
+ln -s /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem /etc/ssl/private/$ELEMENT_SERVER_NAME.key
 mkdir /var/www/synapse_admin
 cd /var/www/synapse_admin
-wget "https://github.com/Awesome-Technologies/synapse-admin/release/download/0.10.1/synapse-admin-0.10.1.tar.gz"
+wget "https://github.com/Awesome-Technologies/synapse-admin/releases/download/0.10.1/synapse-admin-0.10.1.tar.gz"
 tar -xzvf synapse-admin-0.10.1.tar.gz
-certbot certonly --standalone -d $ELEMENT_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
+certbot certonly --standalone -d $ADMIN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
 ln -s /etc/letsencrypt/live/$ADMIN_SERVER_NAME/fullchain.pem /etc/ssl/$ADMIN_SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$ADMIN_SERVER_NAME/private/privkey.pem /etc/ssl/private/$ADMIN_SERVER_NAME.key
+ln -s /etc/letsencrypt/live/$ADMIN_SERVER_NAME/privkey.pem /etc/ssl/private/$ADMIN_SERVER_NAME.key
 
-# need variables JITSI_DNS (you DNS), _YOU_JVB_SECRET (password for jvb), _JITSI_STORE_PASSWORD (password for jitsi store and jvb store),
-# _FOCUS_PASSWORD (password for focus prosody user), _MY_EMAIL (email)
 cat > /etc/pf.conf <<- EOM
-#	\$OpenBSD: pf.conf,v 1.55 2017/12/03 20:40:04 sthen Exp \$
+#  \$OpenBSD: pf.conf,v 1.55 2017/12/03 20:40:04 sthen Exp \$
 #
 # See pf.conf(5) and /etc/examples/pf.conf
 
 set skip on lo
-
-block return	# block stateless traffic
-pass		# establish keep-state
+block in all
+pass out all
+pass in proto { tcp udp } to port ssh
+pass out proto { tcp udp } to port { 53 80 443 }
+block return    # block stateless traffic
+pass            # establish keep-state
 
 # By default, do not permit remote connections to X11
 block return in on ! lo0 proto tcp to port 6000:6010
@@ -242,8 +250,9 @@ block return out log proto {tcp udp} user _pbuild
 
 pass in on egress proto tcp to port { 80 443 }
 pass in on egress proto udp to port 10000
+
 EOM
-# \?
+
 pfctl -f /etc/pf.conf
 cat > /etc/prosody/prosody.cfg.lua <<- EOM
 -- Prosody Example Configuration File
@@ -287,67 +296,67 @@ pidfile = "/var/prosody/prosody.pid"
 -- Documentation for bundled modules can be found at: https://prosody.im/doc/modules
 modules_enabled = {
 
-	-- Generally required
-		"disco"; -- Service discovery
-		"roster"; -- Allow users to have a roster. Recommended ;)
-		"saslauth"; -- Authentication for clients and servers. Recommended if you want to log in.
-		"tls"; -- Add support for secure TLS on c2s/s2s connections
+  -- Generally required
+    "disco"; -- Service discovery
+    "roster"; -- Allow users to have a roster. Recommended ;)
+    "saslauth"; -- Authentication for clients and servers. Recommended if you want to log in.
+    "tls"; -- Add support for secure TLS on c2s/s2s connections
 
-	-- Not essential, but recommended
-		"blocklist"; -- Allow users to block communications with other users
-		"bookmarks"; -- Synchronise the list of open rooms between clients
-		"carbons"; -- Keep multiple online clients in sync
-		"dialback"; -- Support for verifying remote servers using DNS
-		"limits"; -- Enable bandwidth limiting for XMPP connections
-		"pep"; -- Allow users to store public and private data in their account
-		"private"; -- Legacy account storage mechanism (XEP-0049)
-		"smacks"; -- Stream management and resumption (XEP-0198)
-		"vcard4"; -- User profiles (stored in PEP)
-		"vcard_legacy"; -- Conversion between legacy vCard and PEP Avatar, vcard
+  -- Not essential, but recommended
+    "blocklist"; -- Allow users to block communications with other users
+    "bookmarks"; -- Synchronise the list of open rooms between clients
+    "carbons"; -- Keep multiple online clients in sync
+    "dialback"; -- Support for verifying remote servers using DNS
+    "limits"; -- Enable bandwidth limiting for XMPP connections
+    "pep"; -- Allow users to store public and private data in their account
+    "private"; -- Legacy account storage mechanism (XEP-0049)
+    "smacks"; -- Stream management and resumption (XEP-0198)
+    "vcard4"; -- User profiles (stored in PEP)
+    "vcard_legacy"; -- Conversion between legacy vCard and PEP Avatar, vcard
 
-	-- Nice to have
-		"csi_simple"; -- Simple but effective traffic optimizations for mobile devices
-		"invites"; -- Create and manage invites
-		"invites_adhoc"; -- Allow admins/users to create invitations via their client
-		"invites_register"; -- Allows invited users to create accounts
-		"ping"; -- Replies to XMPP pings with pongs
-		"register"; -- Allow users to register on this server using a client and change passwords
-		"time"; -- Let others know the time here on this server
-		"uptime"; -- Report how long server has been running
-		"version"; -- Replies to server version requests
-		--"mam"; -- Store recent messages to allow multi-device synchronization
-		--"turn_external"; -- Provide external STUN/TURN service for e.g. audio/video calls
+  -- Nice to have
+    "csi_simple"; -- Simple but effective traffic optimizations for mobile devices
+    "invites"; -- Create and manage invites
+    "invites_adhoc"; -- Allow admins/users to create invitations via their client
+    "invites_register"; -- Allows invited users to create accounts
+    "ping"; -- Replies to XMPP pings with pongs
+    "register"; -- Allow users to register on this server using a client and change passwords
+    "time"; -- Let others know the time here on this server
+    "uptime"; -- Report how long server has been running
+    "version"; -- Replies to server version requests
+    --"mam"; -- Store recent messages to allow multi-device synchronization
+    --"turn_external"; -- Provide external STUN/TURN service for e.g. audio/video calls
 
-	-- Admin interfaces
-		"admin_adhoc"; -- Allows administration via an XMPP client that supports ad-hoc commands
-		"admin_shell"; -- Allow secure administration via 'prosodyctl shell'
+  -- Admin interfaces
+    "admin_adhoc"; -- Allows administration via an XMPP client that supports ad-hoc commands
+    "admin_shell"; -- Allow secure administration via 'prosodyctl shell'
 
-	-- HTTP modules
-		--"bosh"; -- Enable BOSH clients, aka "Jabber over HTTP"
-		--"http_openmetrics"; -- for exposing metrics to stats collectors
-		--"websocket"; -- XMPP over WebSockets
+  -- HTTP modules
+    --"bosh"; -- Enable BOSH clients, aka "Jabber over HTTP"
+    --"http_openmetrics"; -- for exposing metrics to stats collectors
+    --"websocket"; -- XMPP over WebSockets
 
-	-- Other specific functionality
-		--"announce"; -- Send announcement to all online users
-		--"groups"; -- Shared roster support
-		--"legacyauth"; -- Legacy authentication. Only used by some old clients and bots.
-		--"mimicking"; -- Prevent address spoofing
-		--"motd"; -- Send a message to users when they log in
-		--"proxy65"; -- Enables a file transfer proxy service which clients behind NAT can use
-		--"s2s_bidi"; -- Bi-directional server-to-server (XEP-0288)
-		--"server_contact_info"; -- Publish contact information for this service
-		--"tombstones"; -- Prevent registration of deleted accounts
-		--"watchregistrations"; -- Alert admins of registrations
-		--"welcome"; -- Welcome users who register accounts
+  -- Other specific functionality
+    --"announce"; -- Send announcement to all online users
+    --"groups"; -- Shared roster support
+    --"legacyauth"; -- Legacy authentication. Only used by some old clients and bots.
+    --"mimicking"; -- Prevent address spoofing
+    --"motd"; -- Send a message to users when they log in
+    --"proxy65"; -- Enables a file transfer proxy service which clients behind NAT can use
+    --"s2s_bidi"; -- Bi-directional server-to-server (XEP-0288)
+    --"server_contact_info"; -- Publish contact information for this service
+    --"tombstones"; -- Prevent registration of deleted accounts
+    --"watchregistrations"; -- Alert admins of registrations
+    --"welcome"; -- Welcome users who register accounts
 }
 
 -- These modules are auto-loaded, but should you want
 -- to disable them then uncomment them here:
 modules_disabled = {
-	-- "offline"; -- Store offline messages
-	-- "c2s"; -- Handle client connections
-	-- "s2s"; -- Handle server-to-server connections
-	-- "posix"; -- POSIX functionality, sends server to background, etc.
+  -- "offline"; -- Store offline messages
+  -- "c2s"; -- Handle client connections
+  -- "s2s"; -- Handle server-to-server connections
+  -- "posix"; -- POSIX functionality, sends server to background, etc.
 }
 
 
@@ -375,12 +384,12 @@ s2s_secure_auth = true
 -- protect from excessive resource consumption and denial-of-service attacks.
 
 limits = {
-	c2s = {
-		rate = "10kb/s";
-	};
-	s2sin = {
-		rate = "30kb/s";
-	};
+  c2s = {
+    rate = "10kb/s";
+  };
+  s2sin = {
+    rate = "30kb/s";
+  };
 }
 
 -- Authentication
@@ -438,10 +447,10 @@ archive_expires_after = "1w" -- Remove archived messages after 1 week
 -- Logging configuration
 -- For advanced logging see https://prosody.im/doc/logging
 log = {
-	info = "/var/prosody/prosody.log"; -- Change 'info' to 'debug' for verbose logging
-	error = "/var/prosody/prosody.err";
-	-- "*syslog"; -- Uncomment this for logging to syslog
-	-- "*console"; -- Log to the console, useful for debugging when running in the foreground
+  info = "/var/prosody/prosody.log"; -- Change 'info' to 'debug' for verbose logging
+  error = "/var/prosody/prosody.err";
+  -- "*syslog"; -- Uncomment this for logging to syslog
+  -- "*console"; -- Log to the console, useful for debugging when running in the foreground
 }
 
 
@@ -513,7 +522,7 @@ Component "internal.auth.$JITSI_DNS" "muc"
 -- see: https://prosody.im/doc/components#adding_an_external_component
 --
 --Component "gateway.example.com"
---	component_secret = "password"
+--  component_secret = "password"
 
 
 ---------- End of the Prosody Configuration file ----------
@@ -536,8 +545,7 @@ prosodyctl register jvb auth.$JITSI_DNS $_YOU_JVB_SECRET
 prosodyctl mod_roster_command subscribe focus.$JITSI_DNS focus@auth.$JITSI_DNS
 rcctl set jicofo flags "--host=$JITSI_DNS"
 certbot certonly --key-type rsa --standalone -w /var/www/jitsi-meet -d $JITSI_DNS --quiet --agree-tos --email $_MY_EMAIL
-rcctl stop httpd
-ln -s /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem /etc/ssl/$JITSI_DNS.crt
+ln -s /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem /etc/ssl/$JITSI_DNS.cert
 ln -s /etc/letsencrypt/live/$JITSI_DNS/privkey.pem /etc/ssl/private/$JITSI_DNS.key
 cat > /etc/jicofo/jicofo.in.sh <<- EOM
 JICOFO_CONF=/etc/jicofo/jicofo.conf
@@ -2264,6 +2272,7 @@ if (enableJaaS) {
 }
 
 EOM
+pkg_add nginx
 rcctl enable nginx prosody jicofo jvb
 rcctl order nginx prosody jicofo jvb
 cat > /etc/nginx/nginx.conf <<- EOM
@@ -2366,7 +2375,7 @@ http {
 
         server_name $JITSI_DNS;
 
-        ssl_certificate /etc/ssl/$JITSI_DNS.crt;
+        ssl_certificate /etc/ssl/$JITSI_DNS.cert;
         ssl_certificate_key /etc/ssl/private/$JITSI_DNS.key;
 
         root /jitsi-meet;
@@ -2407,7 +2416,7 @@ http {
         listen [::]:8448 ssl default_server;
 
         server_name $SERVER_NAME;
-        ssl_certificate /etc/ssl/$SERVER_NAME.crt;
+        ssl_certificate /etc/ssl/$SERVER_NAME.cert;
         ssl_certificate_key /etc/ssl/private/$SERVER_NAME.key;
 
         location ~ ^(/_matrix|/_synapse/client) {
@@ -2429,21 +2438,21 @@ http {
     }
 
     server {
-	listen 443 ssl;
-	listen [::]:443 ssl;
-	root /element/element-v1.11.66;
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  root /element/element-v1.11.66;
         ssl_certificate /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem;
         ssl_certificate_key /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem;
-	# Add index.php to the list if you are using PHP
-	index index.html index.htm index.nginx-debian.html;
+  # Add index.php to the list if you are using PHP
+  index index.html index.htm index.nginx-debian.html;
 
-	server_name $ELEMENT_SERVER_NAME;
+  server_name $ELEMENT_SERVER_NAME;
 
-	location / {
-		# First attempt to serve request as file, then
-		# as directory, then fall back to displaying a 404.
-		try_files \$uri \$uri/ =404;
-	}
+  location / {
+    # First attempt to serve request as file, then
+    # as directory, then fall back to displaying a 404.
+    try_files \$uri \$uri/ =404;
+  }
     }
 
     server {
@@ -2482,7 +2491,7 @@ http {
     #    root         /var/www/htdocs;
 
     #    ssl                  on;
-    #    ssl_certificate      /etc/ssl/server.crt;
+    #    ssl_certificate      /etc/ssl/server.cert;
     #    ssl_certificate_key  /etc/ssl/private/server.key;
 
     #    ssl_session_timeout  5m;
@@ -2496,4 +2505,3 @@ http {
 EOM
 rcctl start nginx
 rcctl start prosody jicofo jvb
-
