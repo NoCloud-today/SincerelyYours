@@ -2323,52 +2323,7 @@ http {
         listen       80;
         listen       [::]:80;
         server_name  localhost;
-        root         /var/www/htdocs;
-
-        #charset koi8-r;
-
-        #access_log  logs/host.access.log  main;
-
-        #error_page  404              /404.html;
-
-        # redirect server error pages to the static page /50x.html
-        #
-        error_page   500 502 503 504  /50x.html;
-        location = /50x.html {
-            root  /var/www/htdocs;
-        }
-
-        # FastCGI to CGI wrapper server
-        #
-        #location /cgi-bin/ {
-        #    fastcgi_pass   unix:run/slowcgi.sock;
-        #    fastcgi_split_path_info ^(/cgi-bin/[^/]+)(.*);
-        #    fastcgi_param  PATH_INFO \$fastcgi_path_info;
-        #    include        fastcgi_params;
-        #}
-
-        # proxy the PHP scripts to Apache listening on 127.0.0.1:80
-        #
-        #location ~ \.php$ {
-        #    proxy_pass   http://127.0.0.1;
-        #}
-
-        # pass the PHP scripts to FastCGI server listening on unix socket
-        #
-        #location ~ \.php$ {
-        #    try_files      \$uri \$uri/ =404;
-        #    fastcgi_pass   unix:run/php-fpm.sock;
-        #    fastcgi_index  index.php;
-        #    fastcgi_param  SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        #    include        fastcgi_params;
-        #}
-
-        # deny access to .htaccess files, if Apache's document root
-        # concurs with nginx's one
-        #
-        #location ~ /\.ht {
-        #    deny  all;
-        #}
+        return 301 https://localhost\$request_uri;
     }
 
     server {
