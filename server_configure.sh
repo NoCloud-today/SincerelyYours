@@ -169,7 +169,7 @@ cat > config.json <<- EOM
 {
     "default_server_config": {
         "m.homeserver": {
-            "base_url": "https://$SERVER_NAME:8448",
+            "base_url": "https://$SERVER_NAME",
             "server_name": "$SERVER_NAME"
         },
         "m.identity_server": {
@@ -234,7 +234,7 @@ cat > /etc/pf.conf <<- EOM
 
 set skip on lo
 block in all
-pass out all
+block out all
 pass in proto { tcp udp } to port ssh
 pass out proto { tcp udp } to port { 53 80 443 }
 block return    # block stateless traffic
