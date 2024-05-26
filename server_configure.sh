@@ -86,8 +86,6 @@ $FORM_SECRET
 signing_key_path: "/var/synapse/$SERVER_NAME.signing.key"
 trusted_key_servers:
   - server_name: "matrix.org"
-enable_registration: true
-registration_requires_token: true
 
 # vim:ft=yaml
 turn_uris: [ "turn:$TURN_SERVER_NAME?transport=udp", "turn:$TURN_SERVER_NAME?transport=tcp" ]
@@ -2419,7 +2417,7 @@ http {
         ssl_certificate /etc/ssl/$SERVER_NAME.cert;
         ssl_certificate_key /etc/ssl/private/$SERVER_NAME.key;
 
-        location ~ ^(/_matrix|/_synapse/client) {
+        location ~ ^(/_matrix|/_synapse/client|_synapse/admin) {
             # note: do not add a path (even a single /) after the port in \`proxy_pass\`,
             # otherwise nginx will canonicalise the URI and cause signature verification
             # errors.
