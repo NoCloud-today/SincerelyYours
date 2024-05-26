@@ -149,10 +149,10 @@ total-quota=1200
 
 # TLS certificates, including intermediate certs.
 # For Let's Encrypt certificates, use \`fullchain.pem\` here.
-cert=/etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem
+cert=/etc/ssl/$TURN_SERVER_NAME.cert
 
 # TLS private key file
-pkey=/etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem
+pkey=/etc/ssl/private/$TURN_SERVER_NAME.key
 
 # Ensure the configuration lines that disable TLS/DTLS are commented-out or removed
 # no-tls
@@ -2439,8 +2439,8 @@ http {
   listen 443 ssl;
   listen [::]:443 ssl;
   root /element/element-v1.11.66;
-        ssl_certificate /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem;
+        ssl_certificate /etc/ssl/$ELEMENT_SERVER_NAME.cert;
+        ssl_certificate_key /etc/ssl/private/$ELEMENT_SERVER_NAME.key;
   # Add index.php to the list if you are using PHP
   index index.html index.htm index.nginx-debian.html;
 
@@ -2462,8 +2462,8 @@ http {
         listen 443 ssl;
         listen [::]:443 ssl;
         root /synapse_admin/synapse-admin-0.10.1;
-        ssl_certificate /etc/letsencrypt/live/$ADMIN_SERVER_NAME/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/$ADMIN_SERVER_NAME/privkey.pem;
+        ssl_certificate /etc/ssl/$ADMIN_SERVER_NAME.cert;
+        ssl_certificate_key /etc/ssl/private/$ADMIN_SERVER_NAME.key;
         # Add index.php to the list if you are using PHP
         index index.html index.htm index.nginx-debian.html;
 
