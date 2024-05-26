@@ -2501,5 +2501,10 @@ http {
 
 }
 EOM
+cat > /var/www/synapse_admin/synapse-admin-0.10.1/config.json <<- EOM
+{
+  "restrictBaseUrl": "https://$SERVER_NAME"
+}
+EOM
 rcctl start nginx
 rcctl start prosody jicofo jvb
