@@ -88,7 +88,7 @@ trusted_key_servers:
   - server_name: "matrix.org"
 
 # vim:ft=yaml
-turn_uris: [ "turn:$TURN_SERVER_NAME?transport=udp", "turn:$TURN_SERVER_NAME?transport=tcp" ]
+turn_uris: [ "turns:$TURN_SERVER_NAME?transport=udp", "turns:$TURN_SERVER_NAME?transport=tcp" ]
 turn_shared_secret: "$TURN_SECRET_KEY"
 turn_user_lifetime: 86400000
 turn_allow_guests: true
@@ -249,6 +249,10 @@ block return out log proto {tcp udp} user _pbuild
 pass in on egress proto tcp to port { 80 443 }
 pass in on egress proto udp to port 10000
 
+pass in proto {tcp udp} to port {3478 5349}
+pass out proto {tcp udp} to port {3478 5349}
+pass in proto udp to port 49152:65535
+pass out proto udp to port 49152:65535
 EOM
 
 pfctl -f /etc/pf.conf
