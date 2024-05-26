@@ -102,7 +102,7 @@ ln -s /etc/letsencrypt/live/$SERVER_NAME/privkey.pem /etc/ssl/private/$SERVER_NA
 certbot certonly --standalone -d $TURN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
 ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem /etc/ssl/$TURN_SERVER_NAME.cert
 ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem /etc/ssl/private/$TURN_SERVER_NAME.key
-echo "0 0,12 * * * root python3 -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -p" | tee -a /etc/crontab
+echo "0 0,12 * * * root python3 -c 'import random; import time; time.sleep(random.random() * 3600)' && certbot renew --pre-hook 'rcctl stop nginx' --post-hook 'rcctl start nginx'" | tee -a /etc/crontab
 cd /tmp
 ftp https://cdn.openbsd.org/pub/OpenBSD/$(uname -r)/{ports.tar.gz,SHA256.sig}
 signify -Cp /etc/signify/openbsd-$(uname -r | cut -c 1,3)-base.pub -x SHA256.sig ports.tar.gz
@@ -2449,6 +2449,11 @@ http {
   location / {
     # First attempt to serve request as file, then
     # as directory, then fall back to displaying a 404.
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Content-Security-Policy "frame-ancestors 'self'";
+
     try_files \$uri \$uri/ =404;
   }
     }
@@ -2467,6 +2472,11 @@ http {
         location / {
                 # First attempt to serve request as file, then
                 # as directory, then fall back to displaying a 404.
+                add_header X-Frame-Options SAMEORIGIN;
+                add_header X-Content-Type-Options nosniff;
+                add_header X-XSS-Protection "1; mode=block";
+                add_header Content-Security-Policy "frame-ancestors 'self'";
+
                 try_files \$uri \$uri/ =404;
         }
     }
