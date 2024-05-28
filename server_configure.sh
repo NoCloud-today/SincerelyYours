@@ -11,7 +11,7 @@
 # _YOU_JVB_SECRET (password for jvb)
 # _JITSI_STORE_PASSWORD (password for jitsi store and jvb store),
 # _FOCUS_PASSWORD (password for focus prosody user)
-
+set -e
 cat > /etc/doas.conf <<- EOM
 permit keepenv :wheel
 permit nopass root as _synapse cmd python3
