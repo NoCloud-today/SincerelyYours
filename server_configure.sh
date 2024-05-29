@@ -280,7 +280,7 @@ cat > /etc/prosody/prosody.cfg.lua <<- EOM
 -- for the server. Note that you must create the accounts separately
 -- (see https://prosody.im/doc/creating_accounts for info)
 -- Example: admins = { "user1@example.com", "user2@example.net" }
-admins = { "focus@auth.$JITSI_DNS" }
+admins = { "focus@localhost" }
 
 -- Drop privileges
 prosody_user = "_prosody"
@@ -482,20 +482,20 @@ VirtualHost "$JITSI_DNS"
         "pubsub"; }
     c2s_require_encryption = false
 VirtualHost "localhost"
-VirtualHost "auth.$JITSI_DNS"
-  admins = { "focus@auth.$JITSI_DNS",
-  "jvb@auth.$JITSI_DNS" }
+VirtualHost "localhost"
+  admins = { "focus@localhost",
+  "jvb@localhost" }
   ssl = {
-    certificate = "/var/prosody/auth.$JITSI_DNS.crt";
-    key = "/var/prosody/auth.$JITSI_DNS.key";
+    certificate = "/var/prosody/localhost.crt";
+    key = "/var/prosody/localhost.key";
   }
   authentication = "internal_hashed"
 Component "conference.$JITSI_DNS" "muc"
 Component "jvb.$JITSI_DNS"
    component_secret = "$_YOU_JVB_SECRET"
 Component "focus.$JITSI_DNS" "client_proxy"
-   target_address = "focus@auth.$JITSI_DNS"
-Component "internal.auth.$JITSI_DNS" "muc"
+   target_address = "focus@localhost"
+Component "internal.localhost" "muc"
    muc_room_locking = false
    muc_room_default_public_jids = true
 -- Prosody requires at least one enabled VirtualHost to function. You can
@@ -537,14 +537,14 @@ Component "internal.auth.$JITSI_DNS" "muc"
 --
 -- For more information see https://prosody.im/doc/configure
 EOM
-echo "\n\n\n\n\n\n\n" | prosodyctl cert generate auth.$JITSI_DNS --quiet
-echo "yes\n" | $(javaPathHelper -h jicofo)/bin/keytool -import -alias prosody -file /var/prosody/auth.$JITSI_DNS.crt -keystore /etc/ssl/jitsi.store -storepass $_JITSI_STORE_PASSWORD
+echo "\n\n\n\n\n\n\n" | prosodyctl cert generate localhost --quiet
+echo "yes\n" | $(javaPathHelper -h jicofo)/bin/keytool -import -alias prosody -file /var/prosody/localhost.crt -keystore /etc/ssl/jitsi.store -storepass $_JITSI_STORE_PASSWORD
 cp /etc/ssl/jitsi.store /etc/ssl/jvb.store
 prosodyctl install --server=https://modules.prosody.im/rocks/ mod_client_proxy
 prosodyctl install --server=https://modules.prosody.im/rocks/ mod_roster_command
-prosodyctl register focus auth.$JITSI_DNS $_FOCUS_PASSWORD
-prosodyctl register jvb auth.$JITSI_DNS $_YOU_JVB_SECRET
-prosodyctl mod_roster_command subscribe focus.$JITSI_DNS focus@auth.$JITSI_DNS
+prosodyctl register focus localhost $_FOCUS_PASSWORD
+prosodyctl register jvb localhost $_YOU_JVB_SECRET
+prosodyctl mod_roster_command subscribe focus.$JITSI_DNS focus@localhost
 rcctl set jicofo flags "--host=$JITSI_DNS"
 certbot certonly --key-type rsa --standalone -w /var/www/jitsi-meet -d $JITSI_DNS --quiet --agree-tos --email $_MY_EMAIL
 ln -s /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem /etc/ssl/$JITSI_DNS.cert
@@ -580,7 +580,7 @@ jicofo {
       presence-timeout = 45 seconds
     }
     // The JID of the MUC to be used as a brewery for bridge instances.
-    brewery-jid = "JvbBrewery@internal.auth.$JITSI_DNS"
+    brewery-jid = "JvbBrewery@internal.localhost"
     # brewery-jid = jvbbrewery@example.com
     xmpp-connection-name = Client
   }
@@ -606,7 +606,7 @@ jicofo {
       enabled = true
       hostname = "localhost"
       port = 5222
-      domain = "auth.$JITSI_DNS"
+      domain = "localhost"
       username = "focus"
       password = "$_FOCUS_PASSWORD"
       // A flag to suppress the TLS certificate verification. XXX really?
@@ -623,7 +623,7 @@ jicofo {
 
     // The list of domains with trusted services. Only members logged in to these domains can declare themselves to be
     // Jibri instances.
-    trusted-domains = [ "auth.$JITSI_DNS" ]
+    trusted-domains = [ "localhost" ]
   }
 }
 EOM
@@ -641,10 +641,10 @@ videobridge {
       configs {
         ourprosody {
           hostname = "localhost"
-          domain = "auth.$JITSI_DNS"
+          domain = "localhost"
           username = "jvb"
           password = "$_YOU_JVB_SECRET"
-          muc_jids = "JvbBrewery@internal.auth.$JITSI_DNS"
+          muc_jids = "JvbBrewery@internal.localhost"
           muc_nickname = "jvb"
           disable_certificate_verification = true
         }
