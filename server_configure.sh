@@ -13,13 +13,7 @@ pkg_add pwgen
 # DOAS permissions
 cat > /etc/doas.conf <<- EOM
 permit keepenv :wheel
-permit nopass root as _synapse cmd python3
-permit nopass root as _postgresql cmd mkdir
-permit nopass root as _postgresql cmd initdb
-permit nopass root as _postgresql cmd createuser
-permit nopass root as _postgresql cmd createdb
-permit nopass root as _postgresql cmd psql
-permit nopass root as _postgresql cmd export
+permit nopass root
 EOM
 
 # POSTGRESQL
