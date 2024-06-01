@@ -110,6 +110,7 @@ cd /usr
 tar -xzf /tmp/ports.tar.gz
 cd /usr/ports/telephony/coturn
 make install
+# this file is not creating automatically
 cat > /etc/turnserver.conf <<- EOM
 use-auth-secret
 static-auth-secret=$TURN_SECRET_KEY
