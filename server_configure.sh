@@ -1,17 +1,16 @@
 #!/bin/ksh
 # need SERVER_NAME (dns server name)
 # JITSI_DNS
-# POSTGRES_USER_PASSWORD
-# DB_SUPERUSER_PASSWORD
-# DB_SYNAPSE_USER_PASSWORD
 # _MY_EMAIL
 # TURN_SERVER_NAME
 # ELEMENT_SERVER_NAME
 # ADMIN_SERVER_NAME
-# _YOU_JVB_SECRET (password for jvb)
-# _JITSI_STORE_PASSWORD (password for jitsi store and jvb store),
-# _FOCUS_PASSWORD (password for focus prosody user)
-set -e
+set -e # stop if it is an error
+
+# ADD pwgen
+pkg_add pwgen
+
+# DOAS permissions
 cat > /etc/doas.conf <<- EOM
 permit keepenv :wheel
 permit nopass root as _synapse cmd python3
@@ -21,17 +20,19 @@ permit nopass root as _postgresql cmd createuser
 permit nopass root as _postgresql cmd createdb
 permit nopass root as _postgresql cmd psql
 permit nopass root as _postgresql cmd export
-permit nopass _postgresql as root cmd rcctl
 EOM
-pkg_add synapse postgresql-server py3-psycopg2 prosody jitsi-meet jicofo jitsi-videobridge
-cd "/var/synapse"; doas -n -u _synapse python3 -m synapse.app.homeserver --server-name $SERVER_NAME --config-path homeserver.yaml --generate-config --report-stats=no
+
+# POSTGRESQL
+pkg_add postgresql-server py3-psycopg2
 doas -n -u _postgresql mkdir /var/postgresql/data
 cd "/var/postgresql"
+DB_SUPERUSER_PASSWORD=$(pwgen -s 641)
 echo $DB_SUPERUSER_PASSWORD > db_superuser_password
 doas -n -u _postgresql initdb -D /var/postgresql/data -A scram-sha-256 -E UTF8 --pwfile db_superuser_password
 rm db_superuser_password
 rcctl enable postgresql
 rcctl start postgresql
+DB_SYNAPSE_USER_PASSWORD=$(pwgen -s 641)
 su - _postgresql <<EOF
 export PGPASSWORD="$DB_SUPERUSER_PASSWORD"
 createdb  --encoding=UTF8 --locale=C --template=template0 synapse
@@ -40,10 +41,13 @@ psql -c "grant all privileges on database synapse to synapse_user;" -d synapse
 psql -c "ALTER DATABASE synapse OWNER TO synapse_user;" -d synapse
 export PGPASSWORD=""
 EOF
+
+# SYNAPSE
+pkg_add synapse
+cd "/var/synapse"; doas -n -u _synapse python3 -m synapse.app.homeserver --server-name $SERVER_NAME --config-path homeserver.yaml --generate-config --report-stats=no
 REGISTRATION_SHARED=$(cat /var/synapse/homeserver.yaml | grep registration_shared_secret)
 MACARON_SECRET=$(cat /var/synapse/homeserver.yaml | grep macaroon_secret_key)
 FORM_SECRET=$(cat /var/synapse/homeserver.yaml | grep form_secret)
-pkg_add pwgen
 TURN_SECRET_KEY=$(pwgen -s 641)
 cat > /var/synapse/homeserver.yaml <<- EOM
 # Configuration file for Synapse.
@@ -92,17 +96,19 @@ turn_uris: [ "turns:$TURN_SERVER_NAME?transport=udp", "turns:$TURN_SERVER_NAME?t
 turn_shared_secret: "$TURN_SECRET_KEY"
 turn_user_lifetime: 86400000
 turn_allow_guests: true
-
 EOM
 rcctl enable synapse
+
+# CERTBOT
 pkg_add certbot
 certbot certonly --standalone -d $SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
-ln -s /etc/letsencrypt/live/$SERVER_NAME/fullchain.pem /etc/ssl/$SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$SERVER_NAME/privkey.pem /etc/ssl/private/$SERVER_NAME.key
 certbot certonly --standalone -d $TURN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
-ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem /etc/ssl/$TURN_SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem /etc/ssl/private/$TURN_SERVER_NAME.key
-echo "0 0,12 * * * root python3 -c 'import random; import time; time.sleep(random.random() * 3600)' && certbot renew --pre-hook 'rcctl stop nginx' --post-hook 'rcctl start nginx'" | tee -a /etc/crontab
+certbot certonly --standalone -d $ELEMENT_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
+certbot certonly --standalone -d $ADMIN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
+certbot certonly --key-type rsa --standalone -w /var/www/jitsi-meet -d $JITSI_DNS --quiet --agree-tos --email $_MY_EMAIL
+echo "0 0,12 * * * certbot renew --pre-hook 'rcctl stop nginx' --post-hook 'rcctl start nginx'" | tee -a /etc/crontab
+
+# COTURN
 cd /tmp
 ftp https://cdn.openbsd.org/pub/OpenBSD/$(uname -r)/{ports.tar.gz,SHA256.sig}
 signify -Cp /etc/signify/openbsd-$(uname -r | cut -c 1,3)-base.pub -x SHA256.sig ports.tar.gz
@@ -149,16 +155,18 @@ total-quota=1200
 
 # TLS certificates, including intermediate certs.
 # For Let's Encrypt certificates, use \`fullchain.pem\` here.
-cert=/etc/ssl/$TURN_SERVER_NAME.cert
+cert=/etc/letsencrypt/live/$TURN_SERVER_NAME/fullchain.pem
 
 # TLS private key file
-pkey=/etc/ssl/private/$TURN_SERVER_NAME.key
+pkey=/etc/letsencrypt/live/$TURN_SERVER_NAME/privkey.pem
 
 # Ensure the configuration lines that disable TLS/DTLS are commented-out or removed
 # no-tls
 # no-dtls
 EOM
 rcctl start turnserver synapse
+
+# ELEMENT
 pkg_add wget
 mkdir /var/www/element
 cd /var/www/element
@@ -216,17 +224,19 @@ cat > config.json <<- EOM
     "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx"
 }
 EOM
-certbot certonly --standalone -d $ELEMENT_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
-ln -s /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem /etc/ssl/$ELEMENT_SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem /etc/ssl/private/$ELEMENT_SERVER_NAME.key
+
+# SYNAPSE_ADMIN
 mkdir /var/www/synapse_admin
 cd /var/www/synapse_admin
 wget "https://github.com/Awesome-Technologies/synapse-admin/releases/download/0.10.1/synapse-admin-0.10.1.tar.gz"
 tar -xzvf synapse-admin-0.10.1.tar.gz
-certbot certonly --standalone -d $ADMIN_SERVER_NAME --key-type rsa --quiet --agree-tos --email $_MY_EMAIL
-ln -s /etc/letsencrypt/live/$ADMIN_SERVER_NAME/fullchain.pem /etc/ssl/$ADMIN_SERVER_NAME.cert
-ln -s /etc/letsencrypt/live/$ADMIN_SERVER_NAME/privkey.pem /etc/ssl/private/$ADMIN_SERVER_NAME.key
+cat > /var/www/synapse_admin/synapse-admin-0.10.1/config.json <<- EOM
+{
+  "restrictBaseUrl": "https://$SERVER_NAME"
+}
+EOM
 
+# PF
 cat > /etc/pf.conf <<- EOM
 #  \$OpenBSD: pf.conf,v 1.55 2017/12/03 20:40:04 sthen Exp \$
 #
@@ -254,8 +264,12 @@ pass out proto {tcp udp} to port {3478 5349}
 pass in proto udp to port 49152:65535
 pass out proto udp to port 49152:65535
 EOM
-
 pfctl -f /etc/pf.conf
+
+# JITSI
+# -PROSODY
+pkg_add prosody jitsi-meet jicofo jitsi-videobridge
+_YOU_JVB_SECRET=$(pwgen -s 641)
 cat > /etc/prosody/prosody.cfg.lua <<- EOM
 -- Prosody Example Configuration File
 --
@@ -538,17 +552,17 @@ Component "internal.localhost" "muc"
 -- For more information see https://prosody.im/doc/configure
 EOM
 echo "\n\n\n\n\n\n\n" | prosodyctl cert generate localhost --quiet
+_JITSI_STORE_PASSWORD=$(pwgen -s 641)
 echo "yes\n" | $(javaPathHelper -h jicofo)/bin/keytool -import -alias prosody -file /var/prosody/localhost.crt -keystore /etc/ssl/jitsi.store -storepass $_JITSI_STORE_PASSWORD
 cp /etc/ssl/jitsi.store /etc/ssl/jvb.store
 prosodyctl install --server=https://modules.prosody.im/rocks/ mod_client_proxy
 prosodyctl install --server=https://modules.prosody.im/rocks/ mod_roster_command
+_FOCUS_PASSWORD=$(pwgen -s 641)
 prosodyctl register focus localhost $_FOCUS_PASSWORD
 prosodyctl register jvb localhost $_YOU_JVB_SECRET
 prosodyctl mod_roster_command subscribe focus.$JITSI_DNS focus@localhost
 rcctl set jicofo flags "--host=$JITSI_DNS"
-certbot certonly --key-type rsa --standalone -w /var/www/jitsi-meet -d $JITSI_DNS --quiet --agree-tos --email $_MY_EMAIL
-ln -s /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem /etc/ssl/$JITSI_DNS.cert
-ln -s /etc/letsencrypt/live/$JITSI_DNS/privkey.pem /etc/ssl/private/$JITSI_DNS.key
+# -JICOFO
 cat > /etc/jicofo/jicofo.in.sh <<- EOM
 JICOFO_CONF=/etc/jicofo/jicofo.conf
 JICOFO_LOG_CONFIG=/etc/jicofo/logging.properties
@@ -627,6 +641,7 @@ jicofo {
   }
 }
 EOM
+# -JVB
 cat > /etc/jvb/jvb.conf <<- EOM
 ice4j {
   harvest {
@@ -676,6 +691,7 @@ JVB_GC_TYPE=G1GC
 JVB_SC_HOME_LOCATION='/etc'
 JVB_SC_HOME_NAME='jvb'
 EOM
+# -JITSI-MEET
 cat > /var/www/jitsi-meet/config.js <<- EOM
 /* eslint-disable comma-dangle, no-unused-vars, no-var, prefer-template, vars-on-top */
 
@@ -2272,8 +2288,9 @@ if (enableJaaS) {
     config.dialInConfCodeUrl = 'https://conference-mapper.jitsi.net/v1/access';
     config.roomPasswordNumberOfDigits = 10; // skip re-adding it (do not remove comment)
 }
-
 EOM
+
+# NGINX
 pkg_add nginx
 rcctl enable nginx prosody jicofo jvb
 rcctl order nginx prosody jicofo jvb
@@ -2332,8 +2349,8 @@ http {
 
         server_name $JITSI_DNS;
 
-        ssl_certificate /etc/ssl/$JITSI_DNS.cert;
-        ssl_certificate_key /etc/ssl/private/$JITSI_DNS.key;
+        ssl_certificate /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$JITSI_DNS/privkey.pem;
 
         root /jitsi-meet;
 
@@ -2373,8 +2390,8 @@ http {
         listen [::]:8448 ssl default_server;
 
         server_name $SERVER_NAME;
-        ssl_certificate /etc/ssl/$SERVER_NAME.cert;
-        ssl_certificate_key /etc/ssl/private/$SERVER_NAME.key;
+        ssl_certificate /etc/letsencrypt/live/$SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$SERVER_NAME/privkey.pem;
 
         location ~ ^(/_matrix|/_synapse/client|_synapse/admin) {
             # note: do not add a path (even a single /) after the port in \`proxy_pass\`,
@@ -2398,8 +2415,8 @@ http {
   listen 443 ssl;
   listen [::]:443 ssl;
   root /element/element-v1.11.66;
-        ssl_certificate /etc/ssl/$ELEMENT_SERVER_NAME.cert;
-        ssl_certificate_key /etc/ssl/private/$ELEMENT_SERVER_NAME.key;
+        ssl_certificate /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem;
   # Add index.php to the list if you are using PHP
   index index.html index.htm index.nginx-debian.html;
 
@@ -2421,8 +2438,8 @@ http {
         listen 443 ssl;
         listen [::]:443 ssl;
         root /synapse_admin/synapse-admin-0.10.1;
-        ssl_certificate /etc/ssl/$ADMIN_SERVER_NAME.cert;
-        ssl_certificate_key /etc/ssl/private/$ADMIN_SERVER_NAME.key;
+        ssl_certificate /etc/letsencrypt/live/$ADMIN_SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$ADMIN_SERVER_NAME/privkey.pem;
         # Add index.php to the list if you are using PHP
         index index.html index.htm index.nginx-debian.html;
 
@@ -2468,11 +2485,6 @@ http {
     #    ssl_prefer_server_ciphers   on;
     #}
 
-}
-EOM
-cat > /var/www/synapse_admin/synapse-admin-0.10.1/config.json <<- EOM
-{
-  "restrictBaseUrl": "https://$SERVER_NAME"
 }
 EOM
 rcctl start nginx
