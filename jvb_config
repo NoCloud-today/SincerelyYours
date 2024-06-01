@@ -1,0 +1,36 @@
+ice4j {
+  harvest {
+    use-link-local-addresses = false
+  }
+}
+
+videobridge {
+  apis {
+    xmpp-client {
+      presence-interval = 120s
+      configs {
+        ourprosody {
+          hostname = "localhost"
+          domain = "localhost"
+          username = "jvb"
+          password = "$_YOU_JVB_SECRET"
+          muc_jids = "JvbBrewery@internal.localhost"
+          muc_nickname = "jvb"
+          disable_certificate_verification = true
+        }
+      }
+    }
+  }
+  sctp {
+    enabled = false
+  }
+  ice {
+    tcp {
+      enabled = false
+      port = 443
+    }
+    udp {
+      port = 10000
+    }
+  }
+}

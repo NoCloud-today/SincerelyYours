@@ -1,0 +1,2 @@
+permit keepenv :wheel
+permit nopass root

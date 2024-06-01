@@ -1,0 +1,3 @@
+{
+  "restrictBaseUrl": "https://$SERVER_NAME"
+}

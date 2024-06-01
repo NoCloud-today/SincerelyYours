@@ -1,0 +1,191 @@
+# Take note of http://wiki.nginx.org/Pitfalls
+
+#user  www;
+worker_processes  1;
+
+#load_module "modules/ngx_stream_module.so";
+
+#error_log  logs/error.log;
+#error_log  logs/error.log  notice;
+#error_log  logs/error.log  info;
+#error_log  syslog:server=unix:/dev/log,severity=notice;
+
+#pid        logs/nginx.pid;
+
+worker_rlimit_nofile 1024;
+events {
+    worker_connections  800;
+}
+
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    index         index.html index.htm;
+
+    #log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+    #                  '$status $body_bytes_sent "$http_referer" '
+    #                  '"$http_user_agent" "$http_x_forwarded_for"';
+
+    #access_log  logs/access.log  main;
+    #access_log  syslog:server=unix:/dev/log,severity=notice main;
+
+    #tcp_nopush     on;
+
+    #keepalive_timeout  0;
+    keepalive_timeout  65;
+
+    #gzip  on;
+
+    server_tokens off;
+
+    server {
+        listen       80;
+        listen       [::]:80;
+        server_name  localhost;
+        return 301 https://localhost$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+
+        server_name $JITSI_DNS;
+
+        ssl_certificate /etc/letsencrypt/live/$JITSI_DNS/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$JITSI_DNS/privkey.pem;
+
+        root /jitsi-meet;
+
+        # BOSH
+        location = /http-bind {
+            proxy_pass      http://127.0.0.1:5280/http-bind;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Host $http_host;
+        }
+
+        ssi on;
+        ssi_types application/x-javascript application/javascript;
+
+        location ~ ^/(libs|css|static|images|fonts|lang|sounds|connection_optimization)/(.*)$ {
+            add_header 'Access-Control-Allow-Origin' '*';
+            alias /jitsi-meet/$1/$2;
+        }
+
+        # rooms
+        location ~ ^/([a-zA-Z0-9=\?]+)$ {
+            rewrite ^/(.*)$ / break;
+        }
+
+        # external_api.js must be accessible from the root of the
+        # installation for the electron version of Jitsi Meet to work
+        location /external_api.js {
+            alias /jitsi-meet/libs/external_api.min.js;
+        }
+    }
+    
+    server {
+        listen 443 ssl;
+        listen [::]:443 ssl;
+
+        # For the federation port
+        listen 8448 ssl default_server;
+        listen [::]:8448 ssl default_server;
+
+        server_name $SERVER_NAME;
+        ssl_certificate /etc/letsencrypt/live/$SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$SERVER_NAME/privkey.pem;
+
+        location ~ ^(/_matrix|/_synapse/client|_synapse/admin) {
+            # note: do not add a path (even a single /) after the port in \`proxy_pass\`,
+            # otherwise nginx will canonicalise the URI and cause signature verification
+            # errors.
+            proxy_pass http://localhost:8008;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Host $host;
+
+            # Nginx by default only allows file uploads up to 1M in size
+            # Increase client_max_body_size to match max_upload_size defined in homeserver.yaml
+            client_max_body_size 50M;
+    
+           # Synapse responses may be chunked, which is an HTTP/1.1 feature.
+           proxy_http_version 1.1;
+        }
+    }
+
+    server {
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  root /element/element-v1.11.66;
+        ssl_certificate /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$ELEMENT_SERVER_NAME/privkey.pem;
+  # Add index.php to the list if you are using PHP
+  index index.html index.htm index.nginx-debian.html;
+
+  server_name $ELEMENT_SERVER_NAME;
+
+  location / {
+    # First attempt to serve request as file, then
+    # as directory, then fall back to displaying a 404.
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Content-Security-Policy "frame-ancestors 'self'";
+
+    try_files $uri $uri/ =404;
+  }
+    }
+
+    server {
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        root /synapse_admin/synapse-admin-0.10.1;
+        ssl_certificate /etc/letsencrypt/live/$ADMIN_SERVER_NAME/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$ADMIN_SERVER_NAME/privkey.pem;
+        # Add index.php to the list if you are using PHP
+        index index.html index.htm index.nginx-debian.html;
+
+        server_name $ADMIN_SERVER_NAME;
+
+        location / {
+                # First attempt to serve request as file, then
+                # as directory, then fall back to displaying a 404.
+                add_header X-Frame-Options SAMEORIGIN;
+                add_header X-Content-Type-Options nosniff;
+                add_header X-XSS-Protection "1; mode=block";
+                add_header Content-Security-Policy "frame-ancestors 'self'";
+
+                try_files $uri $uri/ =404;
+        }
+    }
+
+    # another virtual host using mix of IP-, name-, and port-based configuration
+    #
+    #server {
+    #    listen       8000;
+    #    listen       somename:8080;
+    #    server_name  somename  alias  another.alias;
+    #    root         /var/www/htdocs;
+    #}
+
+
+    # HTTPS server
+    #
+    #server {
+    #    listen       443;
+    #    server_name  localhost;
+    #    root         /var/www/htdocs;
+
+    #    ssl                  on;
+    #    ssl_certificate      /etc/ssl/server.cert;
+    #    ssl_certificate_key  /etc/ssl/private/server.key;
+
+    #    ssl_session_timeout  5m;
+    #    ssl_session_cache    shared:SSL:1m;
+
+    #    ssl_ciphers  HIGH:!aNULL:!MD5:!RC4;
+    #    ssl_prefer_server_ciphers   on;
+    #}
+
+}
